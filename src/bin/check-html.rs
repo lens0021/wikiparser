@@ -1,70 +1,66 @@
 use std::{
     fs,
-    io::{stdin, stdout},
+    io::{self, stdin, stdout},
+    path::{Path, PathBuf},
 };
 
-use scraper::{Html, Selector};
+use scraper::Html;
+use serde::{Serialize, Serializer};
 
-use om_wikiparser::html;
+use om_wikiparser::html::{self, HtmlError};
+
+#[derive(Debug, Serialize)]
+struct Stats {
+    file: PathBuf,
+    original_size: usize,
+    processed_size: Option<usize>,
+    #[serde(serialize_with = "write_error")]
+    error: Option<HtmlError>,
+    lang: Option<String>,
+    redirect: Option<String>,
+}
+
+fn write_error<S>(error: &Option<HtmlError>, s: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let debug = error
+        .as_ref()
+        .map(|e| format!("{:?}", e))
+        .unwrap_or_default();
+    debug.serialize(s)
+}
+
+fn check(path: impl AsRef<Path>) -> io::Result<Stats> {
+    let file = path.as_ref().to_owned();
+    let contents = fs::read_to_string(&file)?;
+    let original_size = contents.len();
+    let html = Html::parse_document(&contents);
+
+    let lang = html::detect_lang(&html);
+    let redirect = html::detect_redirect(&html).map(ToOwned::to_owned);
+
+    let (processed_size, error) = html::process(html, lang.as_deref().unwrap_or("en"))
+        .map_or_else(|e| (None, Some(e)), |html| (Some(html.html().len()), None));
+
+    Ok(Stats {
+        file,
+        original_size,
+        processed_size,
+        error,
+        lang,
+        redirect,
+    })
+}
 
 fn main() -> anyhow::Result<()> {
     let mut wtr = csv::WriterBuilder::new()
         .delimiter(b'\t')
         .from_writer(stdout());
 
-    let selectors = [
-        r#"link[rel="mw:PageProp/redirect"]"#,
-        r#"link[rel="mw:PageProp/Category"]"#,
-        r#"head[prefix*=".wikipedia.org/wiki/Special:Redirect/"]"#,
-    ];
-
-    let mut headers = vec![
-        "File",
-        "OriginalSize",
-        "ProcessedSize",
-        "Error",
-        "Lang",
-        "Redirect",
-    ];
-
-    for selector in selectors {
-        headers.push(selector);
-    }
-    let selectors = selectors.map(|s| Selector::parse(s).unwrap());
-
-    wtr.write_record(&headers)?;
-
     for line in stdin().lines() {
-        let file = line?;
-        let contents = fs::read_to_string(&file)?;
-        let original_size = contents.len().to_string();
-        let html = Html::parse_document(&contents);
-
-        let selector_counts: Vec<usize> =
-            selectors.iter().map(|s| html.select(s).count()).collect();
-
-        let lang = html::detect_lang(&html);
-        let redirect = html::detect_redirect(&html).map(ToOwned::to_owned);
-
-        let (processed_size, error) = match html::process(html, lang.as_deref().unwrap_or("en")) {
-            Ok(html) => (html.html().len().to_string(), String::default()),
-            Err(e) => (String::default(), format!("{:?}", e)),
-        };
-
-        let mut row = vec![
-            file,
-            original_size,
-            processed_size,
-            error,
-            lang.unwrap_or_default(),
-            redirect.unwrap_or_default(),
-        ];
-
-        for count in selector_counts {
-            row.push(count.to_string());
-        }
-
-        wtr.write_record(row)?;
+        let stats = check(line?)?;
+        wtr.serialize(stats)?;
     }
 
     Ok(())
