@@ -180,7 +180,7 @@ pub fn has_text(document: &Html) -> bool {
 /// handles panics and other errors.
 pub fn simplify(document: &mut Html, lang: &str) {
     if let Some(titles) = CONFIG.sections_to_remove.get(lang) {
-        remove_sections(document, titles);
+        remove_named_sections(document, titles);
     }
 
     remove_denylist_elements(document);
@@ -207,7 +207,7 @@ fn remove_ids(document: &mut Html, ids: impl IntoIterator<Item = NodeId>) {
 }
 
 /// Remove sections with the specified `titles` and all trailing elements until next section.
-fn remove_sections(document: &mut Html, titles: &BTreeSet<&str>) {
+fn remove_named_sections(document: &mut Html, titles: &BTreeSet<&str>) {
     let mut to_remove = Vec::new();
 
     for header in document.select(&HEADERS) {
@@ -330,7 +330,8 @@ fn remove_empty_sections(document: &mut Html) {
         }
 
         if el
-            .next_siblings()
+            .prev_siblings()
+            .chain(el.next_siblings())
             .filter_map(ElementRef::wrap)
             .all(|e| is_empty_or_whitespace(&e) || HEADERS.matches(&e))
         {
