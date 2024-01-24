@@ -42,6 +42,10 @@ static ELEMENT_ALLOW_LIST: Lazy<Selector> = Lazy::new(|| {
             // TODO: See if these are used in other ways.
             "div.excerpt-block",
             "div.excerpt",
+            // div that wraps the entire section/article content
+            // FIXME: test this on bad files
+            // "section > div:not([data-mw]):not([class])",
+            "section > div:only-child",
         ]
         .join(", "),
     )
